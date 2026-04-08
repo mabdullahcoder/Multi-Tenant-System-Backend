@@ -54,15 +54,39 @@ const authValidationSchemas = {
 
 const orderValidationSchemas = {
     createOrder: Joi.object({
-        productName: Joi.string().required().trim().messages({
-            'string.empty': 'Product name is required',
-        }),
+        // Support for multi-item orders
+        items: Joi.array()
+            .items(
+                Joi.object({
+                    productId: Joi.string().optional().allow(null),
+                    productName: Joi.string().required().trim().messages({
+                        'string.empty': 'Product name is required',
+                    }),
+                    productDescription: Joi.string().optional().trim().allow('').default(''),
+                    quantity: Joi.number().min(1).required().messages({
+                        'number.base': 'Quantity must be a number',
+                        'number.min': 'Quantity must be at least 1',
+                    }),
+                    price: Joi.number().min(0).required().messages({
+                        'number.base': 'Price must be a number',
+                        'number.min': 'Price cannot be negative',
+                    }),
+                    subtotal: Joi.number().min(0).required().messages({
+                        'number.base': 'Subtotal must be a number',
+                        'number.min': 'Subtotal cannot be negative',
+                    }),
+                })
+            )
+            .optional()
+            .allow(null),
+        // Support for backward compatibility - single-item orders
+        productName: Joi.string().optional().trim(),
         productDescription: Joi.string().optional().trim(),
-        quantity: Joi.number().min(1).required().messages({
+        quantity: Joi.number().min(1).optional().messages({
             'number.base': 'Quantity must be a number',
             'number.min': 'Quantity must be at least 1',
         }),
-        price: Joi.number().min(0).required().messages({
+        price: Joi.number().min(0).optional().messages({
             'number.base': 'Price must be a number',
             'number.min': 'Price cannot be negative',
         }),
@@ -85,7 +109,25 @@ const orderValidationSchemas = {
         }).required().messages({
             'any.required': 'Delivery address is required',
         }),
-    }),
+        paymentMethod: Joi.string()
+            .valid('credit_card', 'debit_card', 'upi', 'bank_transfer', 'cash_on_delivery')
+            .optional()
+            .default('credit_card'),
+        notes: Joi.string().optional().trim().allow(''),
+    }).custom((value, helpers) => {
+        // Validate that either items array or single-item fields are provided
+        const hasItems = value.items && Array.isArray(value.items) && value.items.length > 0;
+        const hasSingleItem = value.productName && value.quantity && value.price;
+
+        if (!hasItems && !hasSingleItem) {
+            return helpers.error(
+                'any.custom',
+                { message: 'Either items array or single item details (productName, quantity, price) must be provided' }
+            );
+        }
+
+        return value;
+    }, 'validate-order-items'),
 };
 
 const userValidationSchemas = {

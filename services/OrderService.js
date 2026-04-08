@@ -10,7 +10,7 @@ const { validateInput, orderValidationSchemas } = require('../utils/validationSc
 const { canAccessResource } = require('../utils/authorizationHelper');
 
 class OrderService {
-    // Create order
+    // Create order - supports both single-item and multi-item orders
     async createOrder(userId, orderData, ipAddress, userAgent) {
         try {
             console.log('OrderService.createOrder - Received data:', JSON.stringify(orderData, null, 2));
@@ -27,22 +27,52 @@ class OrderService {
 
             console.log('OrderService.createOrder - Validation passed, creating order...');
 
-            // Create order
-            const order = await OrderRepository.create({
+            // Prepare order data for both single and multi-item orders
+            const preparedData = {
                 userId,
-                ...validation.data,
+                deliveryAddress: validation.data.deliveryAddress,
+                notes: validation.data.notes || null,
                 status: 'pending',
                 paymentStatus: 'pending',
-            });
+                paymentMethod: validation.data.paymentMethod || 'credit_card',
+            };
+
+            // Check if this is a multi-item order or single-item order
+            if (validation.data.items && Array.isArray(validation.data.items) && validation.data.items.length > 0) {
+                // Multi-item order
+                console.log(`Creating multi-item order with ${validation.data.items.length} items`);
+                preparedData.items = validation.data.items;
+                // Calculate totalAmount here so Mongoose required validation passes
+                preparedData.totalAmount = validation.data.items.reduce(
+                    (sum, item) => sum + (item.subtotal ?? item.price * item.quantity),
+                    0
+                );
+            } else {
+                // Single-item order (backward compatibility)
+                console.log('Creating single-item order');
+                preparedData.productName = validation.data.productName;
+                preparedData.productDescription = validation.data.productDescription || '';
+                preparedData.quantity = validation.data.quantity;
+                preparedData.price = validation.data.price;
+                preparedData.totalAmount = validation.data.totalAmount;
+            }
+
+            // Create order
+            const order = await OrderRepository.create(preparedData);
 
             console.log('OrderService.createOrder - Order created successfully:', order.orderId);
+            console.log('Order items count:', order.items?.length || 1);
 
             // Log activity (non-blocking)
             setImmediate(() => {
+                const itemsDesc = order.items?.length > 1
+                    ? `${order.items.length} items`
+                    : `${order.productName}`;
+
                 ActivityLog.create({
                     userId,
                     action: 'order_created',
-                    actionDescription: `Order created: ${order.orderId}`,
+                    actionDescription: `Order created: ${order.orderId} (${itemsDesc})`,
                     resourceId: order._id,
                     resourceType: 'Order',
                     ipAddress,
@@ -90,20 +120,27 @@ class OrderService {
 
     // Update order status (admin only)
     async updateOrderStatus(orderId, status, adminId, adminRole = 'admin', ipAddress, userAgent) {
-        // SENIOR DEBUG: Log all status update requests
         console.log('\n========== ORDER STATUS UPDATE REQUEST ==========');
         console.log(`Order ID: ${orderId}`);
         console.log(`Requested Status: ${status}`);
         console.log(`Admin Role: ${adminRole}`);
-        console.log(`Admin ID: ${adminId}`);
 
-        const previousOrder = await OrderRepository.findById(orderId);
+        // Support both MongoDB _id and human-readable orderId (ORD-xxx)
+        const mongoose = require('mongoose');
+        const isObjectId = mongoose.Types.ObjectId.isValid(orderId);
+        const previousOrder = isObjectId
+            ? await OrderRepository.findById(orderId)
+            : await OrderRepository.findByOrderId(orderId);
+
         if (!previousOrder) {
             const error = new Error('Order not found');
             error.status = 404;
             console.error(`❌ Order not found: ${orderId}`);
             throw error;
         }
+
+        // Always use the MongoDB _id for subsequent DB operations
+        const dbId = previousOrder._id.toString();
 
         console.log(`Current Status: ${previousOrder.status}`);
         console.log(`Order ID (DB): ${previousOrder.orderId}`);
@@ -159,7 +196,8 @@ class OrderService {
 
         console.log(`Update Data:`, JSON.stringify(updateData, null, 2));
 
-        const order = await OrderRepository.update(orderId, updateData);
+        // Use the resolved MongoDB _id, not the raw orderId param (which may be ORD-xxx string)
+        const order = await OrderRepository.update(dbId, updateData);
 
         console.log(`✓ Order Updated in DB`);
         console.log(`Updated Order Status: ${order.status}`);

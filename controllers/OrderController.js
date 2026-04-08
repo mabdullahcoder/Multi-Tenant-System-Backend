@@ -28,24 +28,47 @@ class OrderController {
             // SENIOR FIX: Emit socket events for real-time KDS updates
             console.log(`[Event Emission] New Order Created:`);
             console.log(`  Order ID: ${order.orderId}`);
-            console.log(`  Product: ${order.quantity}x ${order.productName}`);
+
+            // Handle both single-item and multi-item orders
+            let orderSummary;
+            if (order.items && order.items.length > 1) {
+                // Multi-item order
+                console.log(`  Items: ${order.items.length} products`);
+                orderSummary = {
+                    orderId: order.orderId,
+                    _id: order._id,
+                    userId: userId.toString(),
+                    items: order.items,
+                    itemCount: order.items.length,
+                    totalAmount: order.totalAmount,
+                    status: order.status,
+                    paymentStatus: order.paymentStatus,
+                    createdAt: order.createdAt,
+                    updatedAt: order.updatedAt,
+                };
+            } else {
+                // Single-item order (backward compatibility)
+                console.log(`  Product: ${order.quantity}x ${order.productName}`);
+                orderSummary = {
+                    orderId: order.orderId,
+                    _id: order._id,
+                    userId: userId.toString(),
+                    productName: order.productName,
+                    productDescription: order.productDescription,
+                    quantity: order.quantity,
+                    price: order.price,
+                    totalAmount: order.totalAmount,
+                    status: order.status,
+                    paymentStatus: order.paymentStatus,
+                    createdAt: order.createdAt,
+                    updatedAt: order.updatedAt,
+                };
+            }
+
             console.log(`  Status: ${order.status}`);
 
             // Emit to all admins for real-time KDS display
-            emitAdminUpdate('orderCreated', {
-                orderId: order.orderId,
-                _id: order._id,
-                userId: userId.toString(),
-                productName: order.productName,
-                productDescription: order.productDescription,
-                quantity: order.quantity,
-                price: order.price,
-                totalAmount: order.totalAmount,
-                status: order.status,
-                paymentStatus: order.paymentStatus,
-                createdAt: order.createdAt,
-                updatedAt: order.updatedAt,
-            });
+            emitAdminUpdate('orderCreated', orderSummary);
 
             console.log(`✓ Socket event 'orderCreated' emitted to all admins`);
 
