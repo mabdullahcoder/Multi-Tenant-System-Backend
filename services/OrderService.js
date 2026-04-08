@@ -90,19 +90,30 @@ class OrderService {
 
     // Update order status (admin only)
     async updateOrderStatus(orderId, status, adminId, adminRole = 'admin', ipAddress, userAgent) {
+        // SENIOR DEBUG: Log all status update requests
+        console.log('\n========== ORDER STATUS UPDATE REQUEST ==========');
+        console.log(`Order ID: ${orderId}`);
+        console.log(`Requested Status: ${status}`);
+        console.log(`Admin Role: ${adminRole}`);
+        console.log(`Admin ID: ${adminId}`);
+
         const previousOrder = await OrderRepository.findById(orderId);
         if (!previousOrder) {
             const error = new Error('Order not found');
             error.status = 404;
+            console.error(`❌ Order not found: ${orderId}`);
             throw error;
         }
+
+        console.log(`Current Status: ${previousOrder.status}`);
+        console.log(`Order ID (DB): ${previousOrder.orderId}`);
 
         // Validate status transitions
         // Senior Developer Note: Standard flow is maintained for safety, 
         // but Super-Admins can bypass this for manual corrections.
         const validTransitions = {
             pending: ['confirmed', 'cancelled'],
-            confirmed: ['shipped', 'cancelled'],
+            confirmed: ['shipped', 'delivered', 'cancelled'],
             shipped: ['delivered', 'cancelled'],
             delivered: [],
             cancelled: []
@@ -111,14 +122,20 @@ class OrderService {
         const isSuperAdmin = adminRole === 'super-admin';
         const allowedStatuses = validTransitions[previousOrder.status] || [];
 
+        console.log(`Valid Transitions: ${allowedStatuses.join(', ') || 'none'}`);
+        console.log(`Is Super Admin: ${isSuperAdmin}`);
+
         if (!isSuperAdmin && !allowedStatuses.includes(status)) {
             const error = new Error(
                 `Invalid status transition from ${previousOrder.status} to ${status}. ` +
                 `Allowed transitions: ${allowedStatuses.join(', ') || 'none'}`
             );
             error.status = 400;
+            console.error(`❌ Invalid Transition: ${error.message}`);
             throw error;
         }
+
+        console.log(`✓ Transition Valid`);
 
         // Prepare update data
         const updateData = { status };
@@ -140,7 +157,20 @@ class OrderService {
             updateData.paymentStatus = 'refunded';
         }
 
+        console.log(`Update Data:`, JSON.stringify(updateData, null, 2));
+
         const order = await OrderRepository.update(orderId, updateData);
+
+        console.log(`✓ Order Updated in DB`);
+        console.log(`Updated Order Status: ${order.status}`);
+        console.log(`Updated Order ID: ${order.orderId}`);
+
+        // SENIOR DEBUG: Verify status was actually updated
+        if (order.status !== status) {
+            console.warn(`⚠️ WARNING: Status mismatch! Requested: ${status}, Got: ${order.status}`);
+        } else {
+            console.log(`✓ Status Update Verified`);
+        }
 
         // Log admin activity
         await AdminLog.create({
@@ -165,6 +195,7 @@ class OrderService {
             status: 'success',
         });
 
+        console.log(`========== STATUS UPDATE COMPLETE ==========\n`);
         return order;
     }
 

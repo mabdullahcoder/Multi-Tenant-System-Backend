@@ -213,11 +213,8 @@ class OrderController {
                 ? updatedOrder.userId._id.toString()
                 : updatedOrder.userId.toString();
 
-            console.log(`[Event Emission] Order Status Update:`);
-            console.log(`  Order ID: ${updatedOrder.orderId}`);
-            console.log(`  User ID: ${userIdStr}`);
-            console.log(`  New Status: ${updatedOrder.status}`);
-            console.log(`  Admin Role: ${adminRole}`);
+            console.log(`\n📡 SOCKET EMISSION START`);
+            console.log(`Emitting Status: ${updatedOrder.status}`);
 
             // Emit real-time update to the user who owns the order
             emitUpdate(userIdStr, 'orderStatusUpdate', {
@@ -228,6 +225,8 @@ class OrderController {
                 updatedAt: updatedOrder.updatedAt,
                 updatedBy: adminRole,
             });
+
+            console.log(`✓ Emitted to user: ${userIdStr}`);
 
             // Emit update to admin panel for real-time visibility
             emitAdminUpdate('orderStatusUpdated', {
