@@ -185,6 +185,88 @@ class ReportController {
             next(error);
         }
     }
+
+    // ─── COMPREHENSIVE ANALYTICS ENDPOINTS ───────────────────────────────────
+
+    // KPI Overview
+    async getKPIOverview(req, res, next) {
+        try {
+            const { period = 'monthly' } = req.query;
+            const data = await ReportService.getKPIOverview(period);
+            sendSuccess(res, 200, 'KPI overview retrieved', data);
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    // Orders Analytics
+    async getOrdersAnalytics(req, res, next) {
+        try {
+            const { startDate, endDate, status, paymentMethod, page = 1, limit = 20 } = req.query;
+            const data = await ReportService.getOrdersAnalytics({ startDate, endDate, status, paymentMethod, page, limit });
+            sendSuccess(res, 200, 'Orders analytics retrieved', data);
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    // Menu Analytics
+    async getMenuAnalytics(req, res, next) {
+        try {
+            const { startDate, endDate } = req.query;
+            const data = await ReportService.getMenuAnalytics({ startDate, endDate });
+            sendSuccess(res, 200, 'Menu analytics retrieved', data);
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    // Payment Analytics
+    async getPaymentAnalytics(req, res, next) {
+        try {
+            const { startDate, endDate } = req.query;
+            const data = await ReportService.getPaymentAnalytics({ startDate, endDate });
+            sendSuccess(res, 200, 'Payment analytics retrieved', data);
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    // Kitchen Analytics
+    async getKitchenAnalytics(req, res, next) {
+        try {
+            const { startDate, endDate } = req.query;
+            const data = await ReportService.getKitchenAnalytics({ startDate, endDate });
+            sendSuccess(res, 200, 'Kitchen analytics retrieved', data);
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    // Export Analytics
+    async exportAnalytics(req, res, next) {
+        try {
+            const { type, format = 'csv', startDate, endDate } = req.query;
+            if (!type) return sendError(res, 400, 'Export type is required');
+            const validTypes = ['orders', 'menu', 'payments', 'kitchen'];
+            if (!validTypes.includes(type)) return sendError(res, 400, 'Invalid export type');
+
+            const result = await ReportService.exportAnalytics(type, format, { startDate, endDate });
+            const filename = `${result.title.replace(/\s+/g, '_')}_${Date.now()}.${result.format}`;
+
+            if (result.format === 'pdf') {
+                res.setHeader('Content-Type', 'application/pdf');
+                res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+                return res.send(result.buffer);
+            } else {
+                res.setHeader('Content-Type', 'text/csv');
+                res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+                return res.send(result.content);
+            }
+        } catch (error) {
+            next(error);
+        }
+    }
 }
 
 module.exports = new ReportController();

@@ -1,7 +1,7 @@
 {
-  "name": "multi-talented-system-backend",
+  "name": "multi-tanent-system-backend",
   "version": "1.0.0",
-  "description": "Multi-Talented System Backend with Express, MongoDB, JWT",
+  "description": "Multi-Tanent System Backend with Express, MongoDB, JWT",
   "main": "app.js",
   "scripts": {
     "start": "node app.js",

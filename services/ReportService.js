@@ -404,6 +404,358 @@ class ReportService {
             .sort((a, b) => b.value - a.value)
             .slice(0, limit);
     }
+
+    // ─── COMPREHENSIVE ANALYTICS ─────────────────────────────────────────────
+
+    /**
+     * KPI Overview: total sales, orders, avg order value, revenue trend
+     * period: 'daily' | 'weekly' | 'monthly'
+     */
+    async getKPIOverview(period = 'monthly') {
+        const Order = require('../models/Order');
+        const now = new Date();
+
+        // Build current & previous period date ranges
+        let currentStart, previousStart, previousEnd;
+        if (period === 'daily') {
+            currentStart = new Date(now); currentStart.setHours(0, 0, 0, 0);
+            previousStart = new Date(currentStart); previousStart.setDate(previousStart.getDate() - 1);
+            previousEnd = new Date(currentStart);
+        } else if (period === 'weekly') {
+            currentStart = new Date(now); currentStart.setDate(now.getDate() - 6); currentStart.setHours(0, 0, 0, 0);
+            previousStart = new Date(currentStart); previousStart.setDate(previousStart.getDate() - 7);
+            previousEnd = new Date(currentStart);
+        } else {
+            currentStart = new Date(now.getFullYear(), now.getMonth(), 1);
+            previousStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+            previousEnd = new Date(now.getFullYear(), now.getMonth(), 1);
+        }
+
+        const [currentAgg, previousAgg, trendAgg] = await Promise.all([
+            Order.aggregate([
+                { $match: { createdAt: { $gte: currentStart }, status: { $ne: 'cancelled' } } },
+                { $group: { _id: null, totalRevenue: { $sum: '$totalAmount' }, totalOrders: { $sum: 1 } } },
+            ]),
+            Order.aggregate([
+                { $match: { createdAt: { $gte: previousStart, $lt: previousEnd }, status: { $ne: 'cancelled' } } },
+                { $group: { _id: null, totalRevenue: { $sum: '$totalAmount' }, totalOrders: { $sum: 1 } } },
+            ]),
+            // Revenue trend: group by day for the current period
+            Order.aggregate([
+                { $match: { createdAt: { $gte: currentStart }, status: { $ne: 'cancelled' } } },
+                {
+                    $group: {
+                        _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+                        revenue: { $sum: '$totalAmount' },
+                        orders: { $sum: 1 },
+                    },
+                },
+                { $sort: { _id: 1 } },
+            ]),
+        ]);
+
+        const cur = currentAgg[0] || { totalRevenue: 0, totalOrders: 0 };
+        const prev = previousAgg[0] || { totalRevenue: 0, totalOrders: 0 };
+
+        const pctChange = (cur, prev) => prev === 0 ? 0 : (((cur - prev) / prev) * 100).toFixed(1);
+
+        return {
+            totalRevenue: cur.totalRevenue,
+            totalOrders: cur.totalOrders,
+            avgOrderValue: cur.totalOrders > 0 ? (cur.totalRevenue / cur.totalOrders).toFixed(2) : 0,
+            revenueChange: pctChange(cur.totalRevenue, prev.totalRevenue),
+            ordersChange: pctChange(cur.totalOrders, prev.totalOrders),
+            trend: trendAgg.map(d => ({ date: d._id, revenue: d.revenue, orders: d.orders })),
+        };
+    }
+
+    /**
+     * Orders report with advanced filtering
+     */
+    async getOrdersAnalytics(filters = {}) {
+        const Order = require('../models/Order');
+        const { startDate, endDate, status, paymentMethod, page = 1, limit = 20 } = filters;
+
+        const match = {};
+        if (startDate && endDate) match.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
+        if (status) match.status = status;
+        if (paymentMethod) match.paymentMethod = paymentMethod;
+
+        const skip = (page - 1) * limit;
+
+        const [orders, total, statusBreakdown, paymentBreakdown] = await Promise.all([
+            Order.find(match)
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(Number(limit))
+                .populate('userId', 'firstName lastName email'),
+            Order.countDocuments(match),
+            Order.aggregate([
+                { $match: match },
+                { $group: { _id: '$status', count: { $sum: 1 }, revenue: { $sum: '$totalAmount' } } },
+            ]),
+            Order.aggregate([
+                { $match: match },
+                { $group: { _id: '$paymentMethod', count: { $sum: 1 }, revenue: { $sum: '$totalAmount' } } },
+            ]),
+        ]);
+
+        return {
+            orders,
+            pagination: { page: Number(page), limit: Number(limit), total, pages: Math.ceil(total / limit) },
+            statusBreakdown,
+            paymentBreakdown,
+        };
+    }
+
+    /**
+     * Menu performance analytics
+     */
+    async getMenuAnalytics(filters = {}) {
+        const Order = require('../models/Order');
+        const { startDate, endDate } = filters;
+
+        const match = { status: { $ne: 'cancelled' } };
+        if (startDate && endDate) match.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
+
+        const [itemPerformance, categoryPerformance] = await Promise.all([
+            // Item-level: unwind items array
+            Order.aggregate([
+                { $match: match },
+                { $unwind: { path: '$items', preserveNullAndEmptyArrays: false } },
+                {
+                    $group: {
+                        _id: '$items.productName',
+                        productId: { $first: '$items.productId' },
+                        totalQuantity: { $sum: '$items.quantity' },
+                        totalRevenue: { $sum: '$items.subtotal' },
+                        orderCount: { $sum: 1 },
+                        avgPrice: { $avg: '$items.price' },
+                    },
+                },
+                { $sort: { totalRevenue: -1 } },
+            ]),
+            // Category-level via lookup
+            Order.aggregate([
+                { $match: match },
+                { $unwind: { path: '$items', preserveNullAndEmptyArrays: false } },
+                {
+                    $lookup: {
+                        from: 'menuitems',
+                        localField: 'items.productId',
+                        foreignField: '_id',
+                        as: 'menuItem',
+                    },
+                },
+                { $unwind: { path: '$menuItem', preserveNullAndEmptyArrays: true } },
+                {
+                    $lookup: {
+                        from: 'menucategories',
+                        localField: 'menuItem.category',
+                        foreignField: '_id',
+                        as: 'category',
+                    },
+                },
+                { $unwind: { path: '$category', preserveNullAndEmptyArrays: true } },
+                {
+                    $group: {
+                        _id: { $ifNull: ['$category.name', 'Uncategorized'] },
+                        totalRevenue: { $sum: '$items.subtotal' },
+                        totalQuantity: { $sum: '$items.quantity' },
+                        orderCount: { $sum: 1 },
+                    },
+                },
+                { $sort: { totalRevenue: -1 } },
+            ]),
+        ]);
+
+        const topItems = itemPerformance.slice(0, 10);
+        const leastItems = [...itemPerformance].reverse().slice(0, 5);
+
+        return { topItems, leastItems, allItems: itemPerformance, categoryPerformance };
+    }
+
+    /**
+     * Payment analytics breakdown
+     */
+    async getPaymentAnalytics(filters = {}) {
+        const Order = require('../models/Order');
+        const { startDate, endDate } = filters;
+
+        const match = {};
+        if (startDate && endDate) match.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
+
+        const [byMethod, byStatus, dailyTrend] = await Promise.all([
+            Order.aggregate([
+                { $match: match },
+                {
+                    $group: {
+                        _id: '$paymentMethod',
+                        count: { $sum: 1 },
+                        revenue: { $sum: '$totalAmount' },
+                    },
+                },
+                { $sort: { revenue: -1 } },
+            ]),
+            Order.aggregate([
+                { $match: match },
+                {
+                    $group: {
+                        _id: '$paymentStatus',
+                        count: { $sum: 1 },
+                        revenue: { $sum: '$totalAmount' },
+                    },
+                },
+            ]),
+            Order.aggregate([
+                { $match: { ...match, paymentStatus: 'completed' } },
+                {
+                    $group: {
+                        _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+                        revenue: { $sum: '$totalAmount' },
+                        count: { $sum: 1 },
+                    },
+                },
+                { $sort: { _id: 1 } },
+                { $limit: 30 },
+            ]),
+        ]);
+
+        return { byMethod, byStatus, dailyTrend };
+    }
+
+    /**
+     * Kitchen performance metrics
+     */
+    async getKitchenAnalytics(filters = {}) {
+        const Order = require('../models/Order');
+        const { startDate, endDate } = filters;
+
+        const match = {};
+        if (startDate && endDate) match.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
+
+        const [statusCounts, hourlyDistribution, completionTimes] = await Promise.all([
+            Order.aggregate([
+                { $match: match },
+                { $group: { _id: '$status', count: { $sum: 1 } } },
+            ]),
+            // Orders by hour of day
+            Order.aggregate([
+                { $match: match },
+                {
+                    $group: {
+                        _id: { $hour: '$createdAt' },
+                        count: { $sum: 1 },
+                        revenue: { $sum: '$totalAmount' },
+                    },
+                },
+                { $sort: { _id: 1 } },
+            ]),
+            // Avg time from pending → delivered (using updatedAt as proxy)
+            Order.aggregate([
+                { $match: { ...match, status: 'delivered', actualDeliveryDate: { $exists: true, $ne: null } } },
+                {
+                    $project: {
+                        prepTime: {
+                            $divide: [
+                                { $subtract: ['$actualDeliveryDate', '$createdAt'] },
+                                60000, // ms → minutes
+                            ],
+                        },
+                    },
+                },
+                {
+                    $group: {
+                        _id: null,
+                        avgPrepTime: { $avg: '$prepTime' },
+                        minPrepTime: { $min: '$prepTime' },
+                        maxPrepTime: { $max: '$prepTime' },
+                    },
+                },
+            ]),
+        ]);
+
+        const statusMap = statusCounts.reduce((acc, s) => { acc[s._id] = s.count; return acc; }, {});
+        const total = Object.values(statusMap).reduce((a, b) => a + b, 0);
+        const delivered = statusMap.delivered || 0;
+        const cancelled = statusMap.cancelled || 0;
+        const pending = statusMap.pending || 0;
+        const confirmed = statusMap.confirmed || 0;
+
+        return {
+            statusCounts: statusMap,
+            total,
+            completionRate: total > 0 ? ((delivered / total) * 100).toFixed(1) : 0,
+            cancellationRate: total > 0 ? ((cancelled / total) * 100).toFixed(1) : 0,
+            activeOrders: pending + confirmed,
+            hourlyDistribution: hourlyDistribution.map(h => ({
+                hour: `${String(h._id).padStart(2, '0')}:00`,
+                orders: h.count,
+                revenue: h.revenue,
+            })),
+            avgPrepTime: completionTimes[0]?.avgPrepTime?.toFixed(1) || null,
+        };
+    }
+
+    /**
+     * Export analytics data as PDF or CSV
+     */
+    async exportAnalytics(type, format, filters = {}) {
+        const ReportGenerator = require('../utils/reportGenerator');
+        let data = [];
+        let title = '';
+
+        if (type === 'orders') {
+            const result = await this.getOrdersAnalytics({ ...filters, limit: 10000 });
+            data = result.orders.map(o => ({
+                orderId: o.orderId,
+                customer: o.userId ? `${o.userId.firstName} ${o.userId.lastName}` : 'N/A',
+                totalAmount: o.totalAmount,
+                status: o.status,
+                paymentMethod: o.paymentMethod,
+                paymentStatus: o.paymentStatus,
+                createdAt: new Date(o.createdAt).toLocaleString(),
+            }));
+            title = 'Orders Analytics Report';
+        } else if (type === 'menu') {
+            const result = await this.getMenuAnalytics(filters);
+            data = result.allItems.map(i => ({
+                itemName: i._id,
+                totalQuantitySold: i.totalQuantity,
+                totalRevenue: i.totalRevenue,
+                orderCount: i.orderCount,
+                avgPrice: i.avgPrice?.toFixed(2),
+            }));
+            title = 'Menu Performance Report';
+        } else if (type === 'payments') {
+            const result = await this.getPaymentAnalytics(filters);
+            data = result.byMethod.map(p => ({
+                paymentMethod: p._id,
+                transactionCount: p.count,
+                totalRevenue: p.revenue,
+            }));
+            title = 'Payment Analytics Report';
+        } else if (type === 'kitchen') {
+            const result = await this.getKitchenAnalytics(filters);
+            data = result.hourlyDistribution;
+            title = 'Kitchen Performance Report';
+        }
+
+        const reportMeta = {
+            title,
+            reportType: `${type}_analytics`,
+            format,
+            createdAt: new Date(),
+            dateRange: filters,
+            metadata: { totalRecords: data.length },
+        };
+
+        if (format === 'pdf') {
+            return { buffer: await ReportGenerator.generatePDF(reportMeta, data), format: 'pdf', title };
+        } else {
+            return { content: ReportGenerator.generateCSV(data), format: 'csv', title };
+        }
+    }
 }
 
 module.exports = new ReportService();

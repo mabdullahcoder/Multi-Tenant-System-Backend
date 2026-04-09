@@ -22,19 +22,19 @@ const resetAdminPassword = async () => {
         const mongoUri = process.env.MONGODB_URI || process.env.MONGO_URI;
 
         if (!mongoUri) {
-            console.error('❌ Error: MONGODB_URI is not defined in .env file');
+            console.error('Error: MONGODB_URI is not defined in .env file');
             process.exit(1);
         }
 
         // Connect to MongoDB
         await mongoose.connect(mongoUri);
-        console.log('✅ Connected to MongoDB\n');
+        console.log('Connected to MongoDB\n');
 
         // Ask for email
         const email = await question('Enter admin email (superadmin@example.com or admin@example.com): ');
 
         if (!email) {
-            console.log('❌ Email is required');
+            console.log('Email is required');
             rl.close();
             await mongoose.connection.close();
             process.exit(1);
@@ -44,13 +44,13 @@ const resetAdminPassword = async () => {
         const user = await User.findOne({ email: email.trim() });
 
         if (!user) {
-            console.log(`❌ User with email ${email} not found`);
+            console.log(`User with email ${email} not found`);
             rl.close();
             await mongoose.connection.close();
             process.exit(1);
         }
 
-        console.log('\n📋 Current User Status:');
+        console.log('\n Current User Status:');
         console.log('   Email:', user.email);
         console.log('   Role:', user.role);
         console.log('   Is Active:', user.isActive);
@@ -70,28 +70,28 @@ const resetAdminPassword = async () => {
 
         if (newPassword && newPassword.trim()) {
             user.password = newPassword.trim();
-            console.log('\n✅ Password will be updated');
+            console.log('\nPassword will be updated');
         }
 
         await user.save();
 
-        console.log('\n✅ User account reset successfully!');
-        console.log('\n📧 Email:', user.email);
+        console.log('\nUser account reset successfully!');
+        console.log('\nEmail:', user.email);
         if (newPassword && newPassword.trim()) {
-            console.log('🔑 New Password:', newPassword.trim());
+            console.log('New Password:', newPassword.trim());
         } else {
-            console.log('🔑 Password: (unchanged)');
+            console.log('Password: (unchanged)');
         }
-        console.log('✓ Account is now active');
-        console.log('✓ Account is unblocked');
-        console.log('✓ Login attempts reset');
-        console.log('✓ Account lock removed');
+        console.log('Account is now active');
+        console.log('Account is unblocked');
+        console.log('Login attempts reset');
+        console.log('Account lock removed');
 
         rl.close();
         await mongoose.connection.close();
         process.exit(0);
     } catch (error) {
-        console.error('❌ Error:', error.message);
+        console.error('Error:', error.message);
         rl.close();
         await mongoose.connection.close();
         process.exit(1);
