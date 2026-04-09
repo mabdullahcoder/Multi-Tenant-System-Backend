@@ -403,6 +403,62 @@ class OrderController {
         }
     }
 
+    // Append items to a confirmed order (admin only)
+    async appendItemsToOrder(req, res, next) {
+        try {
+            const { orderId } = req.params;
+            const { items } = req.body;
+            const adminId = req.user.id;
+            const ipAddress = getClientIp(req);
+            const userAgent = getUserAgent(req);
+
+            if (!items || !Array.isArray(items) || items.length === 0) {
+                return sendError(res, 400, 'A non-empty items array is required');
+            }
+
+            const { updatedOrder, deltaItems } = await OrderService.appendItemsToOrder(
+                orderId,
+                items,
+                adminId,
+                ipAddress,
+                userAgent
+            );
+
+            const userIdStr = updatedOrder.userId?._id
+                ? updatedOrder.userId._id.toString()
+                : updatedOrder.userId.toString();
+
+            // Notify the customer their order was updated
+            emitUpdate(userIdStr, 'orderItemsAppended', {
+                orderId: updatedOrder.orderId,
+                _id: updatedOrder._id,
+                items: updatedOrder.items,
+                totalAmount: updatedOrder.totalAmount,
+                deltaItems,
+                message: `${deltaItems.length} item(s) were added to your order`,
+                updatedAt: updatedOrder.updatedAt,
+            });
+
+            // Notify all admins / KDS
+            emitAdminUpdate('orderItemsAppended', {
+                orderId: updatedOrder.orderId,
+                _id: updatedOrder._id,
+                userId: userIdStr,
+                items: updatedOrder.items,
+                totalAmount: updatedOrder.totalAmount,
+                deltaItems,
+                updatedAt: updatedOrder.updatedAt,
+                updatedByAdmin: adminId.toString(),
+            });
+
+            console.log(`✓ Items appended to order ${updatedOrder.orderId}: ${deltaItems.length} delta item(s)`);
+
+            return sendSuccess(res, 200, 'Items appended to order successfully', updatedOrder);
+        } catch (error) {
+            return next(error);
+        }
+    }
+
     // Advanced search (admin only)
     async searchOrdersAdvanced(req, res, next) {
         try {

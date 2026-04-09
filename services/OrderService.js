@@ -297,6 +297,112 @@ class OrderService {
         return cancelledOrder;
     }
 
+    /**
+     * Append items to a confirmed order (admin only).
+     * Computes the diff between the incoming full item list and the existing items,
+     * then pushes only the net-new / increased-quantity items to the DB.
+     *
+     * Diff logic:
+     *  - For each incoming item, find a matching existing item by productName (case-insensitive).
+     *  - If the incoming quantity > existing quantity → push the delta as a new sub-document.
+     *  - If the item doesn't exist yet → push it as-is.
+     *  - Items whose quantity decreased or stayed the same are ignored (no removal).
+     */
+    async appendItemsToOrder(orderId, incomingItems, adminId, ipAddress, userAgent) {
+        const { validateInput, appendItemsSchema } = require('../utils/validationSchemas');
+
+        const validation = validateInput(appendItemsSchema, { items: incomingItems });
+        if (!validation.valid) {
+            const error = new Error('Validation failed');
+            error.status = 400;
+            error.errors = validation.errors;
+            throw error;
+        }
+
+        const mongoose = require('mongoose');
+        const isObjectId = mongoose.Types.ObjectId.isValid(orderId);
+        const order = isObjectId
+            ? await OrderRepository.findById(orderId)
+            : await OrderRepository.findByOrderId(orderId);
+
+        if (!order) {
+            const error = new Error('Order not found');
+            error.status = 404;
+            throw error;
+        }
+
+        // Only allow appending to confirmed orders
+        if (!['confirmed', 'pending'].includes(order.status)) {
+            const error = new Error(`Cannot add items to an order with status: ${order.status}`);
+            error.status = 400;
+            throw error;
+        }
+
+        const existingItems = Array.isArray(order.items) ? order.items : [];
+
+        // Build a map of existing items keyed by productName (lowercase)
+        const existingMap = existingItems.reduce((map, item) => {
+            const key = item.productName.toLowerCase().trim();
+            map[key] = (map[key] || 0) + item.quantity;
+            return map;
+        }, {});
+
+        // Compute delta items
+        const deltaItems = [];
+        for (const incoming of validation.data.items) {
+            const key = incoming.productName.toLowerCase().trim();
+            const existingQty = existingMap[key] || 0;
+            const deltaQty = incoming.quantity - existingQty;
+
+            if (deltaQty > 0) {
+                deltaItems.push({
+                    productId: incoming.productId || null,
+                    productName: incoming.productName,
+                    productDescription: incoming.productDescription || '',
+                    quantity: deltaQty,
+                    price: incoming.price,
+                    subtotal: incoming.price * deltaQty,
+                });
+            }
+        }
+
+        if (deltaItems.length === 0) {
+            const error = new Error('No new items to add — quantities match or are lower than existing order');
+            error.status = 400;
+            throw error;
+        }
+
+        const updatedOrder = await OrderRepository.appendItems(order._id.toString(), deltaItems);
+
+        // Log admin activity (non-blocking)
+        setImmediate(() => {
+            const AdminLog = require('../models/AdminLog');
+            AdminLog.create({
+                adminId,
+                action: 'order_items_appended',
+                actionDescription: `${deltaItems.length} item(s) appended to order ${order.orderId}`,
+                targetResourceId: order._id,
+                resourceType: 'Order',
+                previousValue: { itemCount: existingItems.length, totalAmount: order.totalAmount },
+                newValue: { itemCount: updatedOrder.items.length, totalAmount: updatedOrder.totalAmount },
+                ipAddress,
+                userAgent,
+            }).catch(err => console.error('AdminLog error:', err));
+
+            const ActivityLog = require('../models/ActivityLog');
+            ActivityLog.create({
+                userId: order.userId,
+                action: 'order_items_added',
+                actionDescription: `${deltaItems.length} item(s) added to order ${order.orderId} by admin`,
+                resourceId: order._id,
+                resourceType: 'Order',
+                status: 'success',
+            }).catch(err => console.error('ActivityLog error:', err));
+        });
+
+        return { updatedOrder, deltaItems };
+    }
+
     // Get all orders (admin only)
     async getAllOrders(page = 1, limit = 10, filters = {}, search = null) {
         if (search) {

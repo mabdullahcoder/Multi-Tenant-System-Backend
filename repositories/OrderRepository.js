@@ -181,6 +181,22 @@ class OrderRepository {
             .sort({ createdAt: -1 });
     }
 
+    /**
+     * Append new items to an existing order and recalculate totalAmount.
+     * Uses $push to add items atomically and $inc to update the total.
+     */
+    async appendItems(id, newItems) {
+        const additionalTotal = newItems.reduce((sum, item) => sum + item.subtotal, 0);
+        return await Order.findByIdAndUpdate(
+            id,
+            {
+                $push: { items: { $each: newItems } },
+                $inc: { totalAmount: additionalTotal },
+            },
+            { new: true, runValidators: true }
+        ).populate('userId', 'firstName lastName email');
+    }
+
     // Delete order
     async delete(id) {
         return await Order.findByIdAndDelete(id);
@@ -204,7 +220,7 @@ class OrderRepository {
             .skip(skip)
             .sort(sort)
             .populate('userId', 'firstName lastName email');
-        
+
         const total = await Order.countDocuments(query);
 
         return {

@@ -68,6 +68,14 @@ router.put(
     (req, res, next) => OrderController.updateOrderStatus(req, res, next)
 );
 
+// Append items to a confirmed order (admin only)
+router.patch(
+    '/:orderId/append-items',
+    authMiddleware,
+    authorizeRoles('admin', 'super-admin'),
+    (req, res, next) => OrderController.appendItemsToOrder(req, res, next)
+);
+
 // Admin routes - Get all orders (generic, must be last)
 router.get(
     '/',
