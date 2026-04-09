@@ -258,6 +258,7 @@ class OrderController {
                 status: updatedOrder.status,
                 userId: userIdStr,
                 updatedAt: updatedOrder.updatedAt,
+                confirmedAt: updatedOrder.confirmedAt ?? null,
                 updatedByAdmin: adminId.toString(),
                 adminRole: adminRole,
             });

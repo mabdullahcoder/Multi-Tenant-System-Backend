@@ -151,7 +151,7 @@ class MenuService {
         const items = await MenuRepository.getAllItems(false);
         return categories.map((cat) => ({
             ...cat.toObject(),
-            items: items.filter((i) => i.category._id.toString() === cat._id.toString()),
+            items: items.filter((i) => i.category && i.category._id && i.category._id.toString() === cat._id.toString()),
         }));
     }
 

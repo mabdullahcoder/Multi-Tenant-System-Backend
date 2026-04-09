@@ -123,6 +123,10 @@ const orderSchema = new mongoose.Schema(
             type: Date,
             default: null,
         },
+        confirmedAt: {
+            type: Date,
+            default: null,
+        },
     },
     {
         timestamps: true,

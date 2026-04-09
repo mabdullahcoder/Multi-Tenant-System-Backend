@@ -101,7 +101,12 @@ class OrderService {
 
     // Get order details
     async getOrderDetails(orderId, userId, userRole = 'user') {
-        const order = await OrderRepository.findById(orderId);
+        const mongoose = require('mongoose');
+        const isObjectId = mongoose.Types.ObjectId.isValid(orderId);
+        const order = isObjectId
+            ? await OrderRepository.findById(orderId)
+            : await OrderRepository.findByOrderId(orderId);
+
         if (!order) {
             const error = new Error('Order not found');
             error.status = 404;
@@ -184,6 +189,11 @@ class OrderService {
             updateData.estimatedDeliveryDate = estimatedDate;
         }
 
+        // Record the exact moment the order was confirmed — used by KDS timer to survive page refreshes
+        if (status === 'confirmed' && !previousOrder.confirmedAt) {
+            updateData.confirmedAt = new Date();
+        }
+
         // Auto-set actual delivery date when order is delivered
         if (status === 'delivered' && !previousOrder.actualDeliveryDate) {
             updateData.actualDeliveryDate = new Date();
@@ -215,7 +225,7 @@ class OrderService {
             adminId,
             action: 'order_status_updated',
             actionDescription: `Order ${orderId} status changed from ${previousOrder.status} to ${status}`,
-            targetResourceId: orderId,
+            targetResourceId: previousOrder._id,
             resourceType: 'Order',
             previousValue: { status: previousOrder.status },
             newValue: { status, ...updateData },
@@ -228,7 +238,7 @@ class OrderService {
             userId: order.userId,
             action: 'order_status_changed',
             actionDescription: `Order ${order.orderId} status changed to ${status}`,
-            resourceId: orderId,
+            resourceId: order._id,
             resourceType: 'Order',
             status: 'success',
         });
@@ -287,7 +297,7 @@ class OrderService {
                 adminId: userId,
                 action: 'order_cancelled',
                 actionDescription: `Order ${orderId} cancelled by admin: ${cancellationReason}`,
-                targetResourceId: orderId,
+                targetResourceId: order._id,
                 resourceType: 'Order',
                 ipAddress,
                 userAgent,
@@ -433,7 +443,7 @@ class OrderService {
             adminId,
             action: 'order_deleted',
             actionDescription: `Order ${order.orderId} deleted permanently`,
-            targetResourceId: orderId,
+            targetResourceId: order._id,
             resourceType: 'Order',
             previousValue: { order: order.toObject() },
             ipAddress,
@@ -490,7 +500,6 @@ class OrderService {
             adminId,
             action: 'order_bulk_status_updated',
             actionDescription: `Bulk status update to ${status} for ${eligibleIds.length} orders`,
-            targetResourceId: 'multiple',
             resourceType: 'Order',
             newValue: { status, orderIds: eligibleIds },
             ipAddress,

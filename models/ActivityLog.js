@@ -24,6 +24,7 @@ const activityLogSchema = new mongoose.Schema(
                 'order_created',
                 'order_cancelled',
                 'order_status_changed',
+                'order_items_added',
                 'report_generated',
                 'report_downloaded',
                 'profile_picture_updated',
