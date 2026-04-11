@@ -413,6 +413,79 @@ class OrderService {
         return { updatedOrder, deltaItems };
     }
 
+    /**
+     * Replace the full items list on an existing order.
+     * Used by the admin edit-order flow where quantities can increase OR decrease.
+     */
+    async updateOrderItems(orderId, incomingItems, adminId, ipAddress, userAgent) {
+        const { validateInput, updateItemsSchema } = require('../utils/validationSchemas');
+
+        const validation = validateInput(updateItemsSchema, { items: incomingItems });
+        if (!validation.valid) {
+            const error = new Error('Validation failed');
+            error.status = 400;
+            error.errors = validation.errors;
+            throw error;
+        }
+
+        const mongoose = require('mongoose');
+        const isObjectId = mongoose.Types.ObjectId.isValid(orderId);
+        const order = isObjectId
+            ? await OrderRepository.findById(orderId)
+            : await OrderRepository.findByOrderId(orderId);
+
+        if (!order) {
+            const error = new Error('Order not found');
+            error.status = 404;
+            throw error;
+        }
+
+        if (!['confirmed', 'pending'].includes(order.status)) {
+            const error = new Error(`Cannot update items on an order with status: ${order.status}`);
+            error.status = 400;
+            throw error;
+        }
+
+        const normalizedItems = validation.data.items.map((item) => ({
+            productId: item.productId || null,
+            productName: item.productName,
+            productDescription: item.productDescription || '',
+            quantity: item.quantity,
+            price: item.price,
+            subtotal: item.price * item.quantity,
+        }));
+
+        const previousTotal = order.totalAmount;
+        const updatedOrder = await OrderRepository.updateItems(order._id.toString(), normalizedItems);
+
+        setImmediate(() => {
+            const AdminLog = require('../models/AdminLog');
+            AdminLog.create({
+                adminId,
+                action: 'order_items_updated',
+                actionDescription: `Items updated on order ${order.orderId} (${normalizedItems.length} item(s))`,
+                targetResourceId: order._id,
+                resourceType: 'Order',
+                previousValue: { items: order.items, totalAmount: previousTotal },
+                newValue: { items: normalizedItems, totalAmount: updatedOrder.totalAmount },
+                ipAddress,
+                userAgent,
+            }).catch(err => console.error('AdminLog error:', err));
+
+            const ActivityLog = require('../models/ActivityLog');
+            ActivityLog.create({
+                userId: order.userId,
+                action: 'order_items_updated',
+                actionDescription: `Order ${order.orderId} items updated by admin`,
+                resourceId: order._id,
+                resourceType: 'Order',
+                status: 'success',
+            }).catch(err => console.error('ActivityLog error:', err));
+        });
+
+        return updatedOrder;
+    }
+
     // Get all orders (admin only)
     async getAllOrders(page = 1, limit = 10, filters = {}, search = null) {
         if (search) {

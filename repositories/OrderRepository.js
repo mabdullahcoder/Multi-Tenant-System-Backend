@@ -182,6 +182,18 @@ class OrderRepository {
     }
 
     /**
+     * Replace the entire items array and recalculate totalAmount.
+     */
+    async updateItems(id, items) {
+        const totalAmount = items.reduce((sum, item) => sum + item.subtotal, 0);
+        return await Order.findByIdAndUpdate(
+            id,
+            { $set: { items, totalAmount } },
+            { new: true, runValidators: true }
+        ).populate('userId', 'firstName lastName email');
+    }
+
+    /**
      * Append new items to an existing order and recalculate totalAmount.
      * Uses $push to add items atomically and $inc to update the total.
      */

@@ -68,6 +68,14 @@ router.put(
     (req, res, next) => OrderController.updateOrderStatus(req, res, next)
 );
 
+// Update (replace) all items on an existing order (admin only)
+router.put(
+    '/:orderId/update-items',
+    authMiddleware,
+    authorizeRoles('admin', 'super-admin'),
+    (req, res, next) => OrderController.updateOrderItems(req, res, next)
+);
+
 // Append items to a confirmed order (admin only)
 router.patch(
     '/:orderId/append-items',

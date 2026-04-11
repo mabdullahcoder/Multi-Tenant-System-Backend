@@ -139,9 +139,9 @@ class OrderController {
             );
 
             // Get user ID as string for socket emit
-            const userIdStr = cancelledOrder.userId && cancelledOrder.userId._id
-                ? cancelledOrder.userId._id.toString()
-                : cancelledOrder.userId.toString();
+            const userIdStr = cancelledOrder.userId?._id?.toString()
+                ?? cancelledOrder.userId?.toString()
+                ?? null;
 
             console.log(`[Event Emission] Order Cancellation:`);
             console.log(`  Order ID: ${cancelledOrder.orderId}`);
@@ -232,9 +232,9 @@ class OrderController {
             );
 
             // Get user ID as string for socket emit
-            const userIdStr = updatedOrder.userId && updatedOrder.userId._id
-                ? updatedOrder.userId._id.toString()
-                : updatedOrder.userId.toString();
+            const userIdStr = updatedOrder.userId?._id?.toString()
+                ?? updatedOrder.userId?.toString()
+                ?? null;
 
             console.log(`\n📡 SOCKET EMISSION START`);
             console.log(`Emitting Status: ${updatedOrder.status}`);
@@ -296,9 +296,9 @@ class OrderController {
 
             // Emit deletion event to admin panel
             if (order) {
-                const userIdStr = order.userId && order.userId._id
-                    ? order.userId._id.toString()
-                    : order.userId.toString();
+                const userIdStr = order.userId?._id?.toString()
+                    ?? order.userId?.toString()
+                    ?? null;
 
                 console.log(`[Event Emission] Order Deletion:`);
                 console.log(`  Order ID: ${order.orderId}`);
@@ -404,6 +404,58 @@ class OrderController {
         }
     }
 
+    // Update order items (admin only) — replaces the full items list
+    async updateOrderItems(req, res, next) {
+        try {
+            const { orderId } = req.params;
+            const { items } = req.body;
+            const adminId = req.user.id;
+            const ipAddress = getClientIp(req);
+            const userAgent = getUserAgent(req);
+
+            if (!items || !Array.isArray(items) || items.length === 0) {
+                return sendError(res, 400, 'A non-empty items array is required');
+            }
+
+            const updatedOrder = await OrderService.updateOrderItems(
+                orderId,
+                items,
+                adminId,
+                ipAddress,
+                userAgent
+            );
+
+            const userIdStr = updatedOrder.userId?._id?.toString()
+                ?? updatedOrder.userId?.toString()
+                ?? null;
+
+            if (userIdStr) {
+                emitUpdate(userIdStr, 'orderItemsUpdated', {
+                    orderId: updatedOrder.orderId,
+                    _id: updatedOrder._id,
+                    items: updatedOrder.items,
+                    totalAmount: updatedOrder.totalAmount,
+                    message: 'Your order has been updated',
+                    updatedAt: updatedOrder.updatedAt,
+                });
+            }
+
+            emitAdminUpdate('orderItemsUpdated', {
+                orderId: updatedOrder.orderId,
+                _id: updatedOrder._id,
+                userId: userIdStr,
+                items: updatedOrder.items,
+                totalAmount: updatedOrder.totalAmount,
+                updatedAt: updatedOrder.updatedAt,
+                updatedByAdmin: adminId.toString(),
+            });
+
+            return sendSuccess(res, 200, 'Order items updated successfully', updatedOrder);
+        } catch (error) {
+            return next(error);
+        }
+    }
+
     // Append items to a confirmed order (admin only)
     async appendItemsToOrder(req, res, next) {
         try {
@@ -425,20 +477,22 @@ class OrderController {
                 userAgent
             );
 
-            const userIdStr = updatedOrder.userId?._id
-                ? updatedOrder.userId._id.toString()
-                : updatedOrder.userId.toString();
+            const userIdStr = updatedOrder.userId?._id?.toString()
+                ?? updatedOrder.userId?.toString()
+                ?? null;
 
             // Notify the customer their order was updated
-            emitUpdate(userIdStr, 'orderItemsAppended', {
-                orderId: updatedOrder.orderId,
-                _id: updatedOrder._id,
-                items: updatedOrder.items,
-                totalAmount: updatedOrder.totalAmount,
-                deltaItems,
-                message: `${deltaItems.length} item(s) were added to your order`,
-                updatedAt: updatedOrder.updatedAt,
-            });
+            if (userIdStr) {
+                emitUpdate(userIdStr, 'orderItemsAppended', {
+                    orderId: updatedOrder.orderId,
+                    _id: updatedOrder._id,
+                    items: updatedOrder.items,
+                    totalAmount: updatedOrder.totalAmount,
+                    deltaItems,
+                    message: `${deltaItems.length} item(s) were added to your order`,
+                    updatedAt: updatedOrder.updatedAt,
+                });
+            }
 
             // Notify all admins / KDS
             emitAdminUpdate('orderItemsAppended', {

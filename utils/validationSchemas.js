@@ -130,6 +130,37 @@ const orderValidationSchemas = {
     }, 'validate-order-items'),
 };
 
+const updateItemsSchema = Joi.object({
+    items: Joi.array()
+        .items(
+            Joi.object({
+                productId: Joi.string().optional().allow(null),
+                productName: Joi.string().required().trim().messages({
+                    'string.empty': 'Product name is required',
+                }),
+                productDescription: Joi.string().optional().trim().allow('').default(''),
+                quantity: Joi.number().min(1).required().messages({
+                    'number.base': 'Quantity must be a number',
+                    'number.min': 'Quantity must be at least 1',
+                }),
+                price: Joi.number().min(0).required().messages({
+                    'number.base': 'Price must be a number',
+                    'number.min': 'Price cannot be negative',
+                }),
+                subtotal: Joi.number().min(0).required().messages({
+                    'number.base': 'Subtotal must be a number',
+                    'number.min': 'Subtotal cannot be negative',
+                }),
+            })
+        )
+        .min(1)
+        .required()
+        .messages({
+            'array.min': 'At least one item is required',
+            'any.required': 'Items are required',
+        }),
+});
+
 const appendItemsSchema = Joi.object({
     items: Joi.array()
         .items(
@@ -201,6 +232,7 @@ module.exports = {
     authValidationSchemas,
     orderValidationSchemas,
     appendItemsSchema,
+    updateItemsSchema,
     userValidationSchemas,
     validateInput,
 };
