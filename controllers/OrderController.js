@@ -1,7 +1,6 @@
 /**
  * Order Controller
  * Handles order endpoints
- * SENIOR FIX: Added OrderRepository import for real-time deletion
  */
 
 const OrderService = require('../services/OrderService');
@@ -9,6 +8,42 @@ const OrderRepository = require('../repositories/OrderRepository');
 const { sendSuccess, sendError } = require('../utils/responseFormatter');
 const { getClientIp, getUserAgent } = require('../middlewares/loggerMiddleware');
 const { emitUpdate, emitAdminUpdate } = require('../utils/socket');
+const logger = require('../utils/logger');
+
+/**
+ * Build a normalised order summary for socket emission.
+ * Works for both multi-item and legacy single-item orders.
+ */
+const buildOrderSummary = (order, userId) => {
+    const base = {
+        orderId: order.orderId,
+        _id: order._id,
+        userId: userId.toString(),
+        totalAmount: order.totalAmount,
+        status: order.status,
+        paymentStatus: order.paymentStatus,
+        createdAt: order.createdAt,
+        updatedAt: order.updatedAt,
+    };
+
+    if (order.items && order.items.length > 0) {
+        return { ...base, items: order.items, itemCount: order.items.length };
+    }
+
+    return {
+        ...base,
+        productName: order.productName,
+        productDescription: order.productDescription,
+        quantity: order.quantity,
+        price: order.price,
+    };
+};
+
+/**
+ * Safely extract a string user ID from a populated or raw userId field.
+ */
+const extractUserIdStr = (order) =>
+    order.userId?._id?.toString() ?? order.userId?.toString() ?? null;
 
 class OrderController {
     // Create order
@@ -18,63 +53,14 @@ class OrderController {
             const ipAddress = getClientIp(req);
             const userAgent = getUserAgent(req);
 
-            console.log('OrderController.createOrder - User:', userId);
-            console.log('OrderController.createOrder - Request body:', JSON.stringify(req.body, null, 2));
-
             const order = await OrderService.createOrder(userId, req.body, ipAddress, userAgent);
-            console.log("ORDER:", order);
-            console.log('OrderController.createOrder - Success, returning order:', order.orderId);
 
-            // SENIOR FIX: Emit socket events for real-time KDS updates
-            console.log(`[Event Emission] New Order Created:`);
-            console.log(`  Order ID: ${order.orderId}`);
-
-            // Handle both single-item and multi-item orders
-            let orderSummary;
-            if (order.items && order.items.length > 1) {
-                // Multi-item order
-                console.log(`  Items: ${order.items.length} products`);
-                orderSummary = {
-                    orderId: order.orderId,
-                    _id: order._id,
-                    userId: userId.toString(),
-                    items: order.items,
-                    itemCount: order.items.length,
-                    totalAmount: order.totalAmount,
-                    status: order.status,
-                    paymentStatus: order.paymentStatus,
-                    createdAt: order.createdAt,
-                    updatedAt: order.updatedAt,
-                };
-            } else {
-                // Single-item order (backward compatibility)
-                console.log(`  Product: ${order.quantity}x ${order.productName}`);
-                orderSummary = {
-                    orderId: order.orderId,
-                    _id: order._id,
-                    userId: userId.toString(),
-                    productName: order.productName,
-                    productDescription: order.productDescription,
-                    quantity: order.quantity,
-                    price: order.price,
-                    totalAmount: order.totalAmount,
-                    status: order.status,
-                    paymentStatus: order.paymentStatus,
-                    createdAt: order.createdAt,
-                    updatedAt: order.updatedAt,
-                };
-            }
-
-            console.log(`  Status: ${order.status}`);
-
-            // Emit to all admins for real-time KDS display
+            const orderSummary = buildOrderSummary(order, userId);
             emitAdminUpdate('orderCreated', orderSummary);
-
-            console.log(`✓ Socket event 'orderCreated' emitted to all admins`);
+            logger.info(`Order created: ${order.orderId} by user ${userId}`);
 
             return sendSuccess(res, 201, 'Order created successfully', order);
         } catch (error) {
-            console.error('OrderController.createOrder - Error caught:', error.message);
             return next(error);
         }
     }
@@ -88,16 +74,14 @@ class OrderController {
             const filters = {};
             if (status && status !== 'all') {
                 filters.status = status;
-                console.log("FILTER:", filters)
             }
 
             const result = await OrderService.getUserOrders(
                 userId,
                 parseInt(page),
-                parseInt(limit),
+                Math.min(parseInt(limit), 100),
                 filters
             );
-            console.log("RESULT:", result)
             return sendSuccess(res, 200, 'Orders retrieved successfully', result.orders, result.pagination);
         } catch (error) {
             return next(error);
@@ -112,7 +96,6 @@ class OrderController {
             const userRole = req.user.role;
 
             const order = await OrderService.getOrderDetails(orderId, userId, userRole);
-
             return sendSuccess(res, 200, 'Order details retrieved', order);
         } catch (error) {
             return next(error);
@@ -138,18 +121,8 @@ class OrderController {
                 userAgent
             );
 
-            // Get user ID as string for socket emit
-            const userIdStr = cancelledOrder.userId?._id?.toString()
-                ?? cancelledOrder.userId?.toString()
-                ?? null;
+            const userIdStr = extractUserIdStr(cancelledOrder);
 
-            console.log(`[Event Emission] Order Cancellation:`);
-            console.log(`  Order ID: ${cancelledOrder.orderId}`);
-            console.log(`  User ID: ${userIdStr}`);
-            console.log(`  Cancelled By: ${userRole}`);
-            console.log(`  Reason: ${cancellationReason}`);
-
-            // Emit real-time update to user
             emitUpdate(userIdStr, 'orderCancelled', {
                 orderId: cancelledOrder.orderId,
                 _id: cancelledOrder._id,
@@ -158,7 +131,6 @@ class OrderController {
                 updatedAt: cancelledOrder.updatedAt,
             });
 
-            // Notify admin panel with comprehensive data
             emitAdminUpdate('orderCancelled', {
                 orderId: cancelledOrder.orderId,
                 _id: cancelledOrder._id,
@@ -169,8 +141,7 @@ class OrderController {
                 timestamp: new Date(),
             });
 
-            console.log(`✓ Order cancelled: ${cancelledOrder.orderId} by ${userRole}`);
-
+            logger.info(`Order cancelled: ${cancelledOrder.orderId} by ${userRole}`);
             return sendSuccess(res, 200, 'Order cancelled successfully', cancelledOrder);
         } catch (error) {
             return next(error);
@@ -180,18 +151,16 @@ class OrderController {
     // Get all orders (admin only)
     async getAllOrders(req, res, next) {
         try {
-            const { page = 1, limit = 10, status = null, ...filters } = req.query;
-            const search = req.query.search || null;
+            const { page = 1, limit = 10, status = null, search = null, ...rest } = req.query;
 
-            const orderFilters = { ...filters };
-            // Only add status filter if it's provided and not 'all'
+            const orderFilters = { ...rest };
             if (status && status !== 'all') {
                 orderFilters.status = status;
             }
 
             const result = await OrderService.getAllOrders(
                 parseInt(page),
-                parseInt(limit),
+                Math.min(parseInt(limit), 100),
                 orderFilters,
                 search
             );
@@ -212,9 +181,7 @@ class OrderController {
             const ipAddress = getClientIp(req);
             const userAgent = getUserAgent(req);
 
-            // SENIOR FIX: Validate admin role
-            if (!adminRole || !['admin', 'super-admin'].includes(adminRole)) {
-                console.error(`Invalid admin role attempting order update: ${adminRole}`);
+            if (!['admin', 'super-admin'].includes(adminRole)) {
                 return sendError(res, 403, 'Invalid admin role');
             }
 
@@ -231,15 +198,8 @@ class OrderController {
                 userAgent
             );
 
-            // Get user ID as string for socket emit
-            const userIdStr = updatedOrder.userId?._id?.toString()
-                ?? updatedOrder.userId?.toString()
-                ?? null;
+            const userIdStr = extractUserIdStr(updatedOrder);
 
-            console.log(`\n📡 SOCKET EMISSION START`);
-            console.log(`Emitting Status: ${updatedOrder.status}`);
-
-            // Emit real-time update to the user who owns the order
             emitUpdate(userIdStr, 'orderStatusUpdate', {
                 orderId: updatedOrder.orderId,
                 _id: updatedOrder._id,
@@ -249,9 +209,6 @@ class OrderController {
                 updatedBy: adminRole,
             });
 
-            console.log(`✓ Emitted to user: ${userIdStr}`);
-
-            // Emit update to admin panel for real-time visibility
             emitAdminUpdate('orderStatusUpdated', {
                 orderId: updatedOrder.orderId,
                 _id: updatedOrder._id,
@@ -260,11 +217,10 @@ class OrderController {
                 updatedAt: updatedOrder.updatedAt,
                 confirmedAt: updatedOrder.confirmedAt ?? null,
                 updatedByAdmin: adminId.toString(),
-                adminRole: adminRole,
+                adminRole,
             });
 
-            console.log(`✓ Order status updated: ${updatedOrder.orderId} -> ${status} (by ${adminRole})`);
-
+            logger.info(`Order status updated: ${updatedOrder.orderId} → ${status} by ${adminRole}`);
             return sendSuccess(res, 200, 'Order status updated successfully', updatedOrder);
         } catch (error) {
             return next(error);
@@ -289,22 +245,13 @@ class OrderController {
             const ipAddress = getClientIp(req);
             const userAgent = getUserAgent(req);
 
-            // SENIOR FIX: Get order details before deletion for socket emission
+            // Fetch before deletion so we can emit the socket event
             const order = await OrderRepository.findById(orderId).catch(() => null);
 
             await OrderService.deleteOrder(orderId, adminId, ipAddress, userAgent);
 
-            // Emit deletion event to admin panel
             if (order) {
-                const userIdStr = order.userId?._id?.toString()
-                    ?? order.userId?.toString()
-                    ?? null;
-
-                console.log(`[Event Emission] Order Deletion:`);
-                console.log(`  Order ID: ${order.orderId}`);
-                console.log(`  User ID: ${userIdStr}`);
-                console.log(`  Deleted By: super-admin`);
-
+                const userIdStr = extractUserIdStr(order);
                 emitAdminUpdate('orderDeleted', {
                     orderId: order.orderId,
                     _id: order._id,
@@ -312,8 +259,7 @@ class OrderController {
                     deletedBy: 'super-admin',
                     timestamp: new Date(),
                 });
-
-                console.log(`✓ Order deleted: ${order.orderId}`);
+                logger.info(`Order deleted: ${order.orderId} by super-admin ${adminId}`);
             }
 
             return sendSuccess(res, 200, 'Order deleted successfully');
@@ -344,19 +290,12 @@ class OrderController {
                 userAgent
             );
 
-            console.log(`[Bulk Update Socket Emit] Starting bulk order update emissions...`);
-            console.log(`  Total orders affected: ${result.updated}`);
-            console.log(`  New status: ${status}`);
-
-            // SENIOR FIX: Emit socket updates for each affected order
+            // Emit per-order socket updates
             if (result.orders && Array.isArray(result.orders)) {
-                result.orders.forEach(order => {
+                result.orders.forEach((order) => {
                     try {
-                        const userIdStr = order.userId && order.userId._id
-                            ? order.userId._id.toString()
-                            : order.userId.toString();
+                        const userIdStr = extractUserIdStr(order);
 
-                        // Notify individual user of status change
                         emitUpdate(userIdStr, 'orderStatusUpdate', {
                             orderId: order.orderId,
                             _id: order._id,
@@ -366,8 +305,6 @@ class OrderController {
                             updatedBy: adminRole,
                         });
 
-                        // SENIOR FIX: Also emit to admin panel for each order
-                        // This allows real-time individual order updates instead of just summary
                         emitAdminUpdate('orderStatusUpdated', {
                             orderId: order.orderId,
                             _id: order._id,
@@ -375,29 +312,25 @@ class OrderController {
                             userId: userIdStr,
                             updatedAt: order.updatedAt,
                             updatedByAdmin: adminId.toString(),
-                            adminRole: adminRole,
+                            adminRole,
                             isBulkUpdate: true,
                         });
-
-                        console.log(`  ✓ Emitted updates for order ${order.orderId}`);
-                    } catch (error) {
-                        console.error(`Error emitting update for order ${order._id}:`, error.message);
+                    } catch (emitErr) {
+                        logger.error(`Error emitting bulk update for order ${order._id}: ${emitErr.message}`);
                     }
                 });
             }
 
-            // Emit summary to admin panel as well
             emitAdminUpdate('bulkOrderStatusUpdated', {
                 total: result.total,
                 updated: result.updated,
                 status: result.status,
                 updatedByAdmin: adminId.toString(),
-                adminRole: adminRole,
+                adminRole,
                 timestamp: new Date(),
             });
 
-            console.log(`✓ Bulk order update completed: ${result.updated}/${result.total} orders -> ${status}`);
-
+            logger.info(`Bulk status update: ${result.updated}/${result.total} orders → ${status} by ${adminRole}`);
             return sendSuccess(res, 200, 'Bulk update completed', result);
         } catch (error) {
             return next(error);
@@ -425,9 +358,7 @@ class OrderController {
                 userAgent
             );
 
-            const userIdStr = updatedOrder.userId?._id?.toString()
-                ?? updatedOrder.userId?.toString()
-                ?? null;
+            const userIdStr = extractUserIdStr(updatedOrder);
 
             if (userIdStr) {
                 emitUpdate(userIdStr, 'orderItemsUpdated', {
@@ -477,11 +408,8 @@ class OrderController {
                 userAgent
             );
 
-            const userIdStr = updatedOrder.userId?._id?.toString()
-                ?? updatedOrder.userId?.toString()
-                ?? null;
+            const userIdStr = extractUserIdStr(updatedOrder);
 
-            // Notify the customer their order was updated
             if (userIdStr) {
                 emitUpdate(userIdStr, 'orderItemsAppended', {
                     orderId: updatedOrder.orderId,
@@ -494,7 +422,6 @@ class OrderController {
                 });
             }
 
-            // Notify all admins / KDS
             emitAdminUpdate('orderItemsAppended', {
                 orderId: updatedOrder.orderId,
                 _id: updatedOrder._id,
@@ -506,8 +433,7 @@ class OrderController {
                 updatedByAdmin: adminId.toString(),
             });
 
-            console.log(`✓ Items appended to order ${updatedOrder.orderId}: ${deltaItems.length} delta item(s)`);
-
+            logger.info(`Items appended to order ${updatedOrder.orderId}: ${deltaItems.length} delta item(s)`);
             return sendSuccess(res, 200, 'Items appended to order successfully', updatedOrder);
         } catch (error) {
             return next(error);
@@ -522,7 +448,7 @@ class OrderController {
             const result = await OrderService.searchOrdersAdvanced(
                 searchParams,
                 parseInt(page),
-                parseInt(limit)
+                Math.min(parseInt(limit), 100)
             );
 
             return sendSuccess(res, 200, 'Search results retrieved', result.orders, result.pagination);

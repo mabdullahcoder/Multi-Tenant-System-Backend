@@ -93,24 +93,17 @@ class ReportController {
             const ipAddress = getClientIp(req);
             const userAgent = getUserAgent(req);
 
-            console.log('Download request for report:', reportId);
-
             const report = await ReportService.downloadReport(reportId, userId, userRole, ipAddress, userAgent);
-
-            console.log('Report retrieved, format:', report.format, 'status:', report.status);
 
             // Set appropriate headers based on format
             const filename = `${report.title.replace(/\s+/g, '_')}_${report._id}.${report.format}`;
 
             if (report.format === 'pdf') {
-                // Use the generated buffer
                 const pdfBuffer = report.fileBuffer;
 
                 if (!pdfBuffer) {
                     return sendError(res, 500, 'Failed to generate PDF');
                 }
-
-                console.log('PDF buffer size:', pdfBuffer.length);
 
                 res.setHeader('Content-Type', 'application/pdf');
                 res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -118,7 +111,6 @@ class ReportController {
 
                 return res.send(pdfBuffer);
             } else if (report.format === 'csv') {
-                // Use the generated CSV content
                 const csvContent = report.fileContent;
 
                 if (!csvContent) {
@@ -134,7 +126,6 @@ class ReportController {
                 return sendError(res, 400, 'Unsupported report format');
             }
         } catch (error) {
-            console.error('Download report error:', error);
             next(error);
         }
     }

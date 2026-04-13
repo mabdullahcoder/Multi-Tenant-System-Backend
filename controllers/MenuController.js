@@ -3,7 +3,7 @@
  * SENIOR FIX: Added Socket.IO real-time updates for menu changes
  */
 const MenuService = require('../services/MenuService');
-const { sendSuccess, sendError } = require('../utils/responseFormatter');
+const { sendSuccess } = require('../utils/responseFormatter');
 const { emitMenuItemUpdated, emitMenuCategoryUpdated } = require('../utils/socket');
 
 class MenuController {

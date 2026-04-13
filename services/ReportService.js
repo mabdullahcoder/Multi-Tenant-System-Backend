@@ -16,12 +16,6 @@ class ReportService {
     // Generate report
     async generateReport(userId, userRole, reportType, format, dateRange, filters, ipAddress, userAgent) {
         try {
-            console.log('ReportService.generateReport - Starting report generation');
-            console.log('Report Type:', reportType);
-            console.log('Format:', format);
-            console.log('Date Range:', dateRange);
-            console.log('Filters:', filters);
-
             // Validate report type and access
             const validReportTypes = ['orders_report', 'user_activity_report', 'sales_report'];
             if (!validReportTypes.includes(reportType)) {
@@ -48,8 +42,6 @@ class ReportService {
                 generatedBy: userId,
             });
 
-            console.log('Report record created:', report._id);
-
             // Generate report data based on type
             let reportData = [];
             let metadata = {};
@@ -71,21 +63,16 @@ class ReportService {
                 metadata.totalRevenue = reportData.reduce((sum, order) => sum + (order.totalAmount || 0), 0);
             }
 
-            console.log('Report data generated, records:', metadata.totalRecords);
-
             // Store only metadata and report data (not file content)
             // Files will be generated on-demand during download
             report.metadata = {
                 ...metadata,
-                reportData: reportData.slice(0, 100), // Store only first 100 records as sample
+                reportData: reportData.slice(0, 100),
             };
 
-            // Update report with metadata and status
-            report.fileSize = 0; // Will be calculated on download
+            report.fileSize = 0;
             report.status = 'completed';
             await report.save();
-
-            console.log('Report completed successfully');
 
             // Log activity
             const logData = {
@@ -116,7 +103,6 @@ class ReportService {
 
             return report;
         } catch (error) {
-            console.error('ReportService.generateReport - Error:', error);
             throw {
                 status: error.status || 500,
                 message: error.message || 'Error generating report',
@@ -153,7 +139,6 @@ class ReportService {
                 createdAt: order.createdAt,
             }));
         } catch (error) {
-            console.error('Error generating orders report:', error);
             throw new Error(`Error generating orders report: ${error.message}`);
         }
     }
@@ -189,7 +174,6 @@ class ReportService {
                 status: log.status,
             }));
         } catch (error) {
-            console.error('Error generating activity report:', error);
             throw new Error(`Error generating activity report: ${error.message}`);
         }
     }
@@ -223,7 +207,6 @@ class ReportService {
                 deliveredAt: order.actualDeliveryDate,
             }));
         } catch (error) {
-            console.error('Error generating sales report:', error);
             throw new Error(`Error generating sales report: ${error.message}`);
         }
     }
@@ -283,8 +266,6 @@ class ReportService {
             };
         }
 
-        console.log('Generating file for download, report type:', report.reportType);
-
         // Always regenerate report data for download (don't store in DB)
         let reportData = [];
 
@@ -298,8 +279,6 @@ class ReportService {
         } else if (report.reportType === 'sales_report') {
             reportData = await this.generateSalesReport(report.dateRange, report.filters || {});
         }
-
-        console.log('Report data regenerated, records:', reportData.length);
 
         // Generate file content on-the-fly (don't save to DB)
         if (report.format === 'pdf') {

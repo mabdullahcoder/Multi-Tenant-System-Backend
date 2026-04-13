@@ -4,7 +4,8 @@
  */
 
 const AuthService = require('../services/AuthService');
-const { sendSuccess, sendError } = require('../utils/responseFormatter');
+const ActivityLog = require('../models/ActivityLog');
+const { sendSuccess } = require('../utils/responseFormatter');
 const { getClientIp, getUserAgent } = require('../middlewares/loggerMiddleware');
 
 class AuthController {
@@ -53,14 +54,10 @@ class AuthController {
     // Logout endpoint
     async logout(req, res, next) {
         try {
-            const ActivityLog = require('../models/ActivityLog');
-            const { getClientIp, getUserAgent } = require('../middlewares/loggerMiddleware');
-
             const userId = req.user.id;
             const ipAddress = getClientIp(req);
             const userAgent = getUserAgent(req);
 
-            // Log logout activity
             await ActivityLog.create({
                 userId,
                 action: 'logout',

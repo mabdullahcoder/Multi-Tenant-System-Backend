@@ -8,6 +8,7 @@ const ActivityLog = require('../models/ActivityLog');
 const AdminLog = require('../models/AdminLog');
 const { validateInput, userValidationSchemas } = require('../utils/validationSchemas');
 const { requireAdmin } = require('../utils/authorizationHelper');
+const logger = require('../utils/logger');
 
 class UserService {
     // Get user profile
@@ -279,7 +280,7 @@ class UserService {
             });
         } catch (logErr) {
             // Non-fatal — user was created successfully
-            console.warn('AdminLog write failed (non-fatal):', logErr.message);
+            logger.warn(`AdminLog write failed (non-fatal): ${logErr.message}`);
         }
 
         return newUser;

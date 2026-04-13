@@ -66,12 +66,9 @@ class AuthService {
 
     // Login user
     async login(email, password, ipAddress, userAgent) {
-        console.log('AuthService.login - Starting login for:', email);
-
         // Validate input
         const validation = validateInput(authValidationSchemas.login, { email, password });
         if (!validation.valid) {
-            console.error('AuthService.login - Validation failed:', validation.errors);
             throw {
                 status: 400,
                 message: 'Validation failed',
@@ -84,7 +81,6 @@ class AuthService {
             .select('+password')
             .select('firstName lastName email password role isActive isBlocked loginAttempts lockUntil');
         if (!user) {
-            console.error('AuthService.login - User not found:', email);
             throw {
                 status: 401,
                 message: 'Invalid email or password',
@@ -93,26 +89,14 @@ class AuthService {
 
         // Verify role field exists and is valid
         if (!user.role) {
-            console.error('AuthService.login - User found but role is missing:', { id: user._id, email: user.email });
             throw {
                 status: 500,
                 message: 'User role not found. Contact system administrator.',
             };
         }
 
-        console.log('AuthService.login - User found:', {
-            id: user._id,
-            email: user.email,
-            role: user.role,
-            isBlocked: user.isBlocked,
-            isActive: user.isActive,
-            loginAttempts: user.loginAttempts,
-            lockUntil: user.lockUntil,
-        });
-
         // Check if user is blocked
         if (user.isBlocked) {
-            console.error('AuthService.login - User is blocked:', email);
             await ActivityLog.create({
                 userId: user._id,
                 action: 'login',
@@ -131,7 +115,6 @@ class AuthService {
 
         // Check if user is active
         if (!user.isActive) {
-            console.error('AuthService.login - User account is inactive:', email);
             await ActivityLog.create({
                 userId: user._id,
                 action: 'login',
@@ -150,7 +133,6 @@ class AuthService {
 
         // Check if account is locked
         if (user.lockUntil && user.lockUntil > new Date()) {
-            console.error('AuthService.login - Account is locked until:', user.lockUntil);
             throw {
                 status: 429,
                 message: 'Account is locked. Please try again later',
@@ -158,9 +140,7 @@ class AuthService {
         }
 
         // Check password
-        console.log('AuthService.login - Checking password...');
         const isPasswordValid = await user.matchPassword(password);
-        console.log('AuthService.login - Password valid:', isPasswordValid);
 
         if (!isPasswordValid) {
             await user.incLoginAttempts();
@@ -175,7 +155,6 @@ class AuthService {
                 statusCode: 401,
             });
 
-            console.error('AuthService.login - Invalid password for:', email);
             throw {
                 status: 401,
                 message: 'Invalid email or password',
@@ -195,22 +174,16 @@ class AuthService {
             status: 'success',
         });
 
-        console.log('AuthService.login - Login successful for:', email, 'Role:', user.role);
-
-        // SENIOR FIX: Verify role before token generation
+        // Validate role before token generation
         if (!user.role || !['user', 'admin', 'super-admin'].includes(user.role)) {
-            console.error('AuthService.login - CRITICAL: Invalid role before token generation:', user.role);
             throw {
                 status: 500,
                 message: 'Invalid user role found in database',
             };
         }
 
-        // Generate token with explicit role
         const token = generateToken(user._id, user.role, user.email);
-        console.log('AuthService.login - Token generated with role:', user.role);
 
-        // SENIOR FIX: Verify role is in response
         const userResponse = {
             id: user._id,
             firstName: user.firstName,
@@ -218,14 +191,6 @@ class AuthService {
             email: user.email,
             role: user.role,
         };
-
-        if (!userResponse.role) {
-            console.error('CRITICAL: Role missing from user response:', userResponse);
-            throw {
-                status: 500,
-                message: 'Role not properly set in response',
-            };
-        }
 
         return {
             user: userResponse,

@@ -149,9 +149,16 @@ class MenuService {
     async getMenuGrouped() {
         const categories = await MenuRepository.getAllCategories(false);
         const items = await MenuRepository.getAllItems(false);
+
+        // Convert Mongoose documents to plain objects so all fields
+        // (including `image`) serialise correctly and are enumerable.
+        const plainItems = items.map((i) => i.toObject());
+
         return categories.map((cat) => ({
             ...cat.toObject(),
-            items: items.filter((i) => i.category && i.category._id && i.category._id.toString() === cat._id.toString()),
+            items: plainItems.filter(
+                (i) => i.category && i.category._id && i.category._id.toString() === cat._id.toString()
+            ),
         }));
     }
 
