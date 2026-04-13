@@ -8,7 +8,7 @@ const OrderService = require('../services/OrderService');
 const OrderRepository = require('../repositories/OrderRepository');
 const { sendSuccess, sendError } = require('../utils/responseFormatter');
 const { getClientIp, getUserAgent } = require('../middlewares/loggerMiddleware');
-const { emitUpdate, emitAdminUpdate, emitAdminNotification } = require('../utils/socket');
+const { emitUpdate, emitAdminUpdate } = require('../utils/socket');
 
 class OrderController {
     // Create order
