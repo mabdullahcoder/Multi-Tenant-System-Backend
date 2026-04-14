@@ -15,8 +15,10 @@ const canAccessResource = (userRole, resourceOwnerId, userId) => {
     if (['admin', 'super-admin'].includes(userRole)) {
         return true;
     }
+    // Handle populated Mongoose documents (e.g. order.userId populated as { _id, name, ... })
+    const ownerId = resourceOwnerId?._id ?? resourceOwnerId;
     // Regular users can only access their own resources
-    return resourceOwnerId.toString() === userId.toString();
+    return ownerId?.toString() === userId?.toString();
 };
 
 /**

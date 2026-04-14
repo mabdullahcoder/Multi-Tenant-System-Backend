@@ -128,16 +128,48 @@ class ReportService {
                 orders = result.orders;
             }
 
-            return orders.map((order) => ({
-                orderId: order.orderId,
-                productName: order.productName,
-                quantity: order.quantity,
-                price: order.price,
-                totalAmount: order.totalAmount,
-                status: order.status,
-                paymentStatus: order.paymentStatus,
-                createdAt: order.createdAt,
-            }));
+            return orders.map((order) => {
+                // Build item-level rows for multi-item orders
+                if (order.items && order.items.length > 0) {
+                    return {
+                        orderId: order.orderId,
+                        orderDate: order.createdAt
+                            ? new Date(order.createdAt).toLocaleDateString('en-US', {
+                                year: 'numeric', month: 'short', day: 'numeric',
+                            })
+                            : 'N/A',
+                        items: order.items.map((item) => ({
+                            productName: item.productName,
+                            quantity: item.quantity,
+                            unitPrice: item.price,
+                            subtotal: item.subtotal,
+                        })),
+                        totalAmount: order.totalAmount,
+                        status: order.status,
+                        paymentStatus: order.paymentStatus,
+                        createdAt: order.createdAt,
+                    };
+                }
+                // Legacy single-item order
+                return {
+                    orderId: order.orderId,
+                    orderDate: order.createdAt
+                        ? new Date(order.createdAt).toLocaleDateString('en-US', {
+                            year: 'numeric', month: 'short', day: 'numeric',
+                        })
+                        : 'N/A',
+                    items: [{
+                        productName: order.productName || 'N/A',
+                        quantity: order.quantity || 0,
+                        unitPrice: order.price || 0,
+                        subtotal: order.totalAmount || 0,
+                    }],
+                    totalAmount: order.totalAmount,
+                    status: order.status,
+                    paymentStatus: order.paymentStatus,
+                    createdAt: order.createdAt,
+                };
+            });
         } catch (error) {
             throw new Error(`Error generating orders report: ${error.message}`);
         }
@@ -293,7 +325,24 @@ class ReportService {
             const fileContent = await ReportGenerator.generatePDF(reportInfo, reportData);
             report.fileBuffer = fileContent; // Attach buffer temporarily for controller
         } else if (report.format === 'csv') {
-            const fileContent = ReportGenerator.generateCSV(reportData);
+            // Flatten multi-item orders for CSV so each item gets its own row
+            let csvData = reportData;
+            if (report.reportType === 'orders_report') {
+                csvData = reportData.flatMap((order) =>
+                    (order.items || []).map((item) => ({
+                        orderId: order.orderId,
+                        orderDate: order.orderDate || '',
+                        productName: item.productName,
+                        quantity: item.quantity,
+                        unitPrice: item.unitPrice,
+                        subtotal: item.subtotal,
+                        orderTotal: order.totalAmount,
+                        status: order.status,
+                        paymentStatus: order.paymentStatus,
+                    }))
+                );
+            }
+            const fileContent = ReportGenerator.generateCSV(csvData);
             report.fileContent = fileContent; // Attach content temporarily for controller
         }
 
